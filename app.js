@@ -33,6 +33,7 @@ const copyTooltip = document.getElementById('copy-tooltip');
 const btnExportText = document.getElementById('btn-export-text');
 let textExportFrames = null;
 let textExportStartedAt = 0;
+const PIXEL_TEXT_PALETTE = " `.-':_,^=;><+!rc*/z?sLTv)J7(|Fi{C}fI31tlu[neoZ5Yxjya]2ESwqkP6h9d4VpOGbUAKXHm8RD#$Bg0MNWQ%&@";
 let scrubMeta = null; // hover sprite layout from /scrub
 let copyFeedbackTimer = null;
 
@@ -325,6 +326,7 @@ function connectWebSocket() {
             }
             if (event.data.startsWith('Error:')) {
                 hideToast();  // drop any "fetching..." notice; the fetch failed
+                if (textExportFrames) cancelTextExport('Export stopped because playback failed.');
                 statusEl.textContent = event.data;
                 statusEl.style.color = '#ff0000';
                 if (ws) ws.close();
@@ -342,6 +344,7 @@ function connectWebSocket() {
                 pixelMode = (p.length > 5 && parseInt(p[5]) === 1);
                 pixelCodec = pixelMode && p[11] === 'dct' ? 'dct' : 'raw';
                 const isWebcam = (p.length > 9 && parseInt(p[9]) === 1);
+                isWebcamStream = isWebcam;
                 if (btnCopy) {
                     btnCopy.disabled = pixelMode;
                     btnCopy.title = pixelMode
@@ -349,18 +352,16 @@ function connectWebSocket() {
                         : 'Copy current ASCII frame';
                 }
                 if (btnExportText) {
-                    btnExportText.disabled = isWebcam || pixelMode;
-                    btnExportText.textContent = 'EXPORT TXT';
+                    btnExportText.disabled = isWebcam || Boolean(textExportFrames);
+                    btnExportText.textContent = textExportFrames ? 'EXPORTING…' : 'EXPORT FULL TXT';
                     btnExportText.title = isWebcam
                         ? 'Text export is unavailable for live webcam streams'
-                        : pixelMode
-                            ? 'Text export is available in ASCII modes'
-                            : 'Capture the rendered ASCII frames as a text file';
+                        : 'Export the full playback from the beginning as timestamped ASCII text';
+                    if (isWebcam && textExportFrames) cancelTextExport('Text export is unavailable for live webcam streams.');
                 }
                 const currentQueueIndex = (p.length > 6) ? parseInt(p[6]) : null;
                 duration = (p.length > 7) ? parseFloat(p[7]) : 0;
                 const startOffset = (p.length > 8) ? parseFloat(p[8]) : 0;
-                isWebcamStream = isWebcam;
                 syncId = !isWebcam && p.length > 10 ? Number(p[10]) : null;
                 pendingSeekId = null;
                 resetPlaybackStart();
@@ -503,6 +504,10 @@ function connectWebSocket() {
     ws.onopen = () => { statusEl.textContent = 'Buffering...'; };
 
     ws.onclose = (event) => {
+        if (textExportFrames) {
+            if (event.code === 1000) finishTextExport();
+            else cancelTextExport('Export stopped because the playback connection was lost.');
+        }
         if (state === 'PLAYING' || state === 'PAUSED') {
             // 1000 = server closed cleanly after finishing the queue. Anything
             // else (1006 dropped TCP, 1001/1012 server shutdown) is a real drop.
@@ -639,7 +644,8 @@ function renderFrame(now) {
     playbackMetrics.displayTime = frameObj.time;
 
     if (textExportFrames) {
-        const renderedText = renderMode === 1 ? frame : player.textContent;
+        if (textExportFrames.length === 0) textExportStartedAt = performance.now();
+        const renderedText = pixelMode ? pixelFrameToText(frame) : renderMode === 1 ? frame : player.textContent;
         textExportFrames.push({
             video: currentQueueIdx,
             captureTime: (performance.now() - textExportStartedAt) / 1000,
@@ -647,6 +653,28 @@ function renderFrame(now) {
             text: renderedText.replace(/\s+$/, '')
         });
     }
+}
+
+function pixelFrameToText(frame) {
+    const cols = Math.min(gridCols, 200);
+    const rows = Math.max(1, Math.round(gridRows * cols / gridCols));
+    const lines = new Array(rows);
+    const maxIndex = PIXEL_TEXT_PALETTE.length - 1;
+    for (let row = 0; row < rows; row++) {
+        const sourceRow = Math.min(gridRows - 1, Math.floor(row * gridRows / rows));
+        let line = '';
+        for (let col = 0; col < cols; col++) {
+            const sourceCol = Math.min(gridCols - 1, Math.floor(col * gridCols / cols));
+            const offset = (sourceRow * gridCols + sourceCol) * 3;
+            const blue = frame[offset];
+            const green = frame[offset + 1];
+            const red = frame[offset + 2];
+            const gray = (red * 299 + green * 587 + blue * 114) / 1000;
+            line += PIXEL_TEXT_PALETTE[Math.min(maxIndex, Math.floor(gray * maxIndex / 255))];
+        }
+        lines[row] = line;
+    }
+    return lines.join('\n');
 }
 
 // ═══════════════════════════════════════
@@ -762,7 +790,7 @@ function finishStream() {
 // ═══════════════════════════════════════
 
 function togglePause() {
-    if (isWebcamStream) return; // Can't pause a live broadcast!
+    if (isWebcamStream || textExportFrames) return; // Preserve a full-length export.
     if (state === 'PLAYING') {
         const pausedAt = getMasterClock();
         resumeNeedsAudioSeek = readyToRender && !audioClockActive;
@@ -858,7 +886,7 @@ function getMasterClock() {
 }
 
 function skip(delta) {
-    if (state !== 'PLAYING' && state !== 'PAUSED') return;
+    if (textExportFrames || (state !== 'PLAYING' && state !== 'PAUSED')) return;
     if (!duration) return;
     doSeek(getMasterClock() + delta);
 }
@@ -964,10 +992,12 @@ function finishTextExport() {
     if (!textExportFrames) return;
     const frames = textExportFrames;
     textExportFrames = null;
-    btnExportText.textContent = 'EXPORT TXT';
-    btnExportText.title = 'Capture the rendered ASCII frames as a text file';
+    setTextExportPlaybackLock(false);
+    btnExportText.disabled = isWebcamStream;
+    btnExportText.textContent = 'EXPORT FULL TXT';
+    btnExportText.title = 'Export the full playback as timestamped ASCII text';
     if (!frames.length) {
-        showToast('No rendered frames captured. Start playback, then export.');
+        showToast('No rendered frames were captured.');
         return;
     }
 
@@ -994,25 +1024,44 @@ function finishTextExport() {
     link.click();
     link.remove();
     setTimeout(() => URL.revokeObjectURL(url), 60_000);
-    showToast(`Exported ${frames.length} text frames.`);
+    showToast(`Full playback exported: ${frames.length} text frames.`);
+}
+
+function cancelTextExport(message) {
+    textExportFrames = null;
+    textExportStartedAt = 0;
+    setTextExportPlaybackLock(false);
+    if (btnExportText) {
+        btnExportText.disabled = isWebcamStream;
+        btnExportText.textContent = 'EXPORT FULL TXT';
+        btnExportText.title = 'Export the full playback as timestamped ASCII text';
+    }
+    showToast(message);
+}
+
+function setTextExportPlaybackLock(locked) {
+    [playPauseBtn, seekBar, btnBack, btnFwd].forEach(control => {
+        if (control) control.disabled = locked;
+    });
 }
 
 if (btnExportText) {
     btnExportText.addEventListener('click', (e) => {
         e.stopPropagation();
-        if (textExportFrames) {
-            finishTextExport();
-            return;
-        }
-        if (!readyToRender || state === 'IDLE' || isWebcamStream || pixelMode) {
-            showToast(pixelMode ? 'Text export is available in ASCII modes.' : 'Start ASCII playback before exporting.');
+        if (textExportFrames || btnExportText.disabled) return;
+        if (isWebcamStream) {
+            showToast('Text export is unavailable for live webcam streams.');
             return;
         }
         textExportFrames = [];
-        textExportStartedAt = performance.now();
-        btnExportText.textContent = 'SAVE TXT';
-        btnExportText.title = 'Stop capturing frames and download the text file';
-        showToast('Capturing ASCII frames. Click SAVE TXT to download.');
+        textExportStartedAt = 0;
+        btnExportText.textContent = 'EXPORTING…';
+        btnExportText.disabled = true;
+        btnExportText.title = 'Capturing the full playback; the text file downloads when it finishes';
+        showToast('Exporting the full video from the beginning. The text file downloads at the end.');
+        setTextExportPlaybackLock(true);
+        if (state !== 'IDLE') finishStream();
+        startStream();
     });
 }
 

@@ -450,7 +450,7 @@ python stream_server.py --playlist playlist.json --cols 220 --loop
 
 Open `http://localhost:8000` in your browser.
 
-In ASCII modes, use **EXPORT TXT** in the player controls to capture the rendered frames as a time-stamped plain-text file. Click **SAVE TXT** when finished. The export contains the frames rendered during that capture, so it can be reused by scripts or served as text without hosting the original video. Open **TEXT PLAYER** (or go to `/text-player`) to load the export as an animation with playback and seeking controls. Pixel mode and live webcam streams do not produce ASCII text exports.
+Use **EXPORT FULL TXT** to restart playback from the beginning and capture the entire queue as timestamped plain-text frames. The file downloads automatically at the end. In pixel mode, frames are sampled to 200 columns and mapped to ASCII brightness characters; live webcam streams cannot be exported. Open **TEXT PLAYER** (or go to `/text-player`) to load the export as an animation with playback and seeking controls.
 
 ### Optional: Rust engine + live pixel DCT (preview, Windows-tested)
 
