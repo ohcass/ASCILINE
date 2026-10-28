@@ -450,7 +450,7 @@ python stream_server.py --playlist playlist.json --cols 220 --loop
 
 Open `http://localhost:8000` in your browser.
 
-Use **EXPORT FULL TXT** to restart playback from the beginning and capture the entire queue as timestamped plain-text frames. The file downloads automatically at the end. In pixel mode, frames are sampled to 200 columns and mapped to ASCII brightness characters; live webcam streams cannot be exported. Open **TEXT PLAYER** (or go to `/text-player`) to load the export as an animation with playback and seeking controls.
+Use **EXPORT FULL TXT** to restart the current video from the beginning and capture its full duration as timestamped plain-text frames. The file downloads automatically at the end. In pixel mode, frames are sampled to 200 columns and mapped to ASCII brightness characters; live webcam streams cannot be exported. Open **TEXT PLAYER** (or go to `/text-player`) to load the export as an animation with playback and seeking controls.
 
 ### Optional: Rust engine + live pixel DCT (preview, Windows-tested)
 

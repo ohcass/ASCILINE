@@ -1060,8 +1060,12 @@ if (btnExportText) {
         btnExportText.title = 'Capturing the full playback; the text file downloads when it finishes';
         showToast('Exporting the full video from the beginning. The text file downloads at the end.');
         setTextExportPlaybackLock(true);
-        if (state !== 'IDLE') finishStream();
-        startStream();
+        if (state !== 'IDLE' && ws && ws.readyState === WebSocket.OPEN) {
+            doSeek(0); // Restart the current source while preserving its render mode.
+        } else {
+            if (state !== 'IDLE') finishStream();
+            startStream();
+        }
     });
 }
 
