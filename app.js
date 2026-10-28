@@ -341,6 +341,7 @@ function connectWebSocket() {
                 renderMode = parseInt(p[2]);
                 pixelMode = (p.length > 5 && parseInt(p[5]) === 1);
                 pixelCodec = pixelMode && p[11] === 'dct' ? 'dct' : 'raw';
+                const isWebcam = (p.length > 9 && parseInt(p[9]) === 1);
                 if (btnCopy) {
                     btnCopy.disabled = pixelMode;
                     btnCopy.title = pixelMode
@@ -359,7 +360,6 @@ function connectWebSocket() {
                 const currentQueueIndex = (p.length > 6) ? parseInt(p[6]) : null;
                 duration = (p.length > 7) ? parseFloat(p[7]) : 0;
                 const startOffset = (p.length > 8) ? parseFloat(p[8]) : 0;
-                const isWebcam = (p.length > 9 && parseInt(p[9]) === 1);
                 isWebcamStream = isWebcam;
                 syncId = !isWebcam && p.length > 10 ? Number(p[10]) : null;
                 pendingSeekId = null;
