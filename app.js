@@ -30,6 +30,8 @@ const seekPreviewImg = document.getElementById('seek-preview-img');
 const seekPreviewTime = document.getElementById('seek-preview-time');
 const btnCopy = document.getElementById('btn-copy');
 const copyTooltip = document.getElementById('copy-tooltip');
+const btnExportText = document.getElementById('btn-export-text');
+let textExportFrames = null;
 let scrubMeta = null; // hover sprite layout from /scrub
 let copyFeedbackTimer = null;
 
@@ -344,6 +346,15 @@ function connectWebSocket() {
                         ? 'Copy text is only available in ASCII modes'
                         : 'Copy current ASCII frame';
                 }
+                if (btnExportText) {
+                    btnExportText.disabled = isWebcam || pixelMode;
+                    btnExportText.textContent = 'EXPORT TXT';
+                    btnExportText.title = isWebcam
+                        ? 'Text export is unavailable for live webcam streams'
+                        : pixelMode
+                            ? 'Text export is available in ASCII modes'
+                            : 'Capture the rendered ASCII frames as a text file';
+                }
                 const currentQueueIndex = (p.length > 6) ? parseInt(p[6]) : null;
                 duration = (p.length > 7) ? parseFloat(p[7]) : 0;
                 const startOffset = (p.length > 8) ? parseFloat(p[8]) : 0;
@@ -625,6 +636,15 @@ function renderFrame(now) {
     playbackMetrics.renderMs += performance.now() - renderStarted;
     playbackMetrics.rendered++;
     playbackMetrics.displayTime = frameObj.time;
+
+    if (textExportFrames) {
+        const renderedText = renderMode === 1 ? frame : player.textContent;
+        textExportFrames.push({
+            video: currentQueueIdx,
+            time: frameObj.time,
+            text: renderedText.replace(/\s+$/, '')
+        });
+    }
 }
 
 // ═══════════════════════════════════════
@@ -935,6 +955,61 @@ if (btnCopy) {
             console.error('Failed to copy ASCII frame:', error);
             showCopyTooltip('COPY FAILED');
         }
+    });
+}
+
+function finishTextExport() {
+    if (!textExportFrames) return;
+    const frames = textExportFrames;
+    textExportFrames = null;
+    btnExportText.textContent = 'EXPORT TXT';
+    btnExportText.title = 'Capture the rendered ASCII frames as a text file';
+    if (!frames.length) {
+        showToast('No rendered frames captured. Start playback, then export.');
+        return;
+    }
+
+    const lines = [
+        '# ASCILINE text-frame export',
+        '# Each timestamp is seconds from the start of its source video.',
+        '# Frames contain the rendered ASCII characters; blank lines separate frames.',
+        ''
+    ];
+    let lastVideo = null;
+    for (const frame of frames) {
+        if (frame.video !== lastVideo) {
+            lines.push(`# source ${frame.video + 1}`);
+            lastVideo = frame.video;
+        }
+        lines.push(`@ ${frame.time.toFixed(3)}s`, frame.text, '');
+    }
+    const blob = new Blob([lines.join('\n')], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `asciline-frames-${new Date().toISOString().replace(/[:.]/g, '-')}.txt`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    showToast(`Exported ${frames.length} text frames.`);
+}
+
+if (btnExportText) {
+    btnExportText.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (textExportFrames) {
+            finishTextExport();
+            return;
+        }
+        if (!readyToRender || state === 'IDLE' || isWebcamStream || pixelMode) {
+            showToast(pixelMode ? 'Text export is available in ASCII modes.' : 'Start ASCII playback before exporting.');
+            return;
+        }
+        textExportFrames = [];
+        btnExportText.textContent = 'SAVE TXT';
+        btnExportText.title = 'Stop capturing frames and download the text file';
+        showToast('Capturing ASCII frames. Click SAVE TXT to download.');
     });
 }
 
