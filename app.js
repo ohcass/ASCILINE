@@ -32,6 +32,7 @@ const btnCopy = document.getElementById('btn-copy');
 const copyTooltip = document.getElementById('copy-tooltip');
 const btnExportText = document.getElementById('btn-export-text');
 let textExportFrames = null;
+let textExportStartedAt = 0;
 let scrubMeta = null; // hover sprite layout from /scrub
 let copyFeedbackTimer = null;
 
@@ -641,6 +642,7 @@ function renderFrame(now) {
         const renderedText = renderMode === 1 ? frame : player.textContent;
         textExportFrames.push({
             video: currentQueueIdx,
+            captureTime: (performance.now() - textExportStartedAt) / 1000,
             time: frameObj.time,
             text: renderedText.replace(/\s+$/, '')
         });
@@ -981,7 +983,7 @@ function finishTextExport() {
             lines.push(`# source ${frame.video + 1}`);
             lastVideo = frame.video;
         }
-        lines.push(`@ ${frame.time.toFixed(3)}s`, frame.text, '');
+        lines.push(`@ ${frame.captureTime.toFixed(3)}s source ${frame.video + 1} ${frame.time.toFixed(3)}s`, frame.text, '');
     }
     const blob = new Blob([lines.join('\n')], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
@@ -1007,6 +1009,7 @@ if (btnExportText) {
             return;
         }
         textExportFrames = [];
+        textExportStartedAt = performance.now();
         btnExportText.textContent = 'SAVE TXT';
         btnExportText.title = 'Stop capturing frames and download the text file';
         showToast('Capturing ASCII frames. Click SAVE TXT to download.');

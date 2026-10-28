@@ -391,6 +391,13 @@ async def root():
     return HTMLResponse(get_html_content())
 
 
+@app.get("/text-player")
+async def text_player():
+    """Serves the standalone player for exported ASCII text-frame files."""
+    player_path = os.path.join(BASE_DIR, "static_player", "text_player.html")
+    return FileResponse(player_path, media_type="text/html")
+
+
 @app.get("/health")
 async def health():
     """Report HTTP server liveness without accessing video or decoder state."""

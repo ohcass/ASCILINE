@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ASCILINE Text Player</title>
+  <style>
+    :root { color-scheme: dark; font-family: system-ui, sans-serif; background: #090b0c; color: #e8eeee; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px; }
+    main { width: min(100%, 1100px); }
+    header { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }
+    h1 { margin: 0; color: #00eaff; font: 700 20px/1.2 "Courier New", monospace; letter-spacing: 2px; }
+    header p { margin: 0; color: #879395; font: 12px "Courier New", monospace; }
+    .drop { display: flex; align-items: center; justify-content: center; gap: 12px; min-height: 76px; border: 1px dashed #3a4b4e; border-radius: 8px 8px 0 0; background: #111719; color: #aebbbc; padding: 14px; text-align: center; }
+    .drop.drag { border-color: #00eaff; background: #102225; }
+    input[type=file] { max-width: 100%; }
+    #stage { min-height: 320px; aspect-ratio: 16 / 9; display: grid; place-items: center; overflow: auto; background: #020303; border: 1px solid #293538; border-top: 0; padding: 14px; }
+    #frame { margin: 0; color: #d8f6ed; font: 8px/8px "Courier New", monospace; font-weight: 700; white-space: pre; }
+    #empty { color: #566568; font: 12px "Courier New", monospace; text-align: center; }
+    .controls { display: grid; grid-template-columns: auto auto minmax(100px, 1fr) auto auto; align-items: center; gap: 10px; background: #111719; border: 1px solid #293538; border-top: 0; padding: 12px; border-radius: 0 0 8px 8px; }
+    button { color: #00eaff; background: #070a0b; border: 1px solid #354649; border-radius: 4px; padding: 8px 12px; font: 700 12px "Courier New", monospace; cursor: pointer; }
+    button:disabled, input:disabled { opacity: .4; cursor: default; }
+    input[type=range] { width: 100%; accent-color: #00eaff; }
+    .time { color: #9ba7a8; font: 12px "Courier New", monospace; white-space: nowrap; }
+    #status { min-height: 20px; margin: 10px 2px; color: #9ba7a8; font: 12px "Courier New", monospace; }
+    .hint { color: #718082; font-size: 13px; line-height: 1.5; }
+    a { color: #00eaff; }
+    @media (max-width: 600px) {
+      body { padding: 12px; }
+      .controls { grid-template-columns: auto auto 1fr; }
+      .controls input[type=range] { grid-column: 1 / -1; grid-row: 2; }
+      #stage { min-height: 220px; aspect-ratio: 4 / 3; padding: 8px; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>ASCILINE TEXT PLAYER</h1>
+      <p>PLAYABLE ASCII FRAMES · LOCAL FILES STAY IN YOUR BROWSER</p>
+    </header>
+    <label class="drop" id="drop">
+      <span>Choose or drop an ASCILINE text export</span>
+      <input id="file" type="file" accept=".txt,text/plain">
+    </label>
+    <section id="stage" aria-label="ASCII video playback area">
+      <pre id="frame" hidden></pre>
+      <div id="empty">LOAD AN EXPORT TO PLAY</div>
+    </section>
+    <div class="controls">
+      <button id="play" disabled>PLAY</button>
+      <span class="time" id="current">00:00.000</span>
+      <input id="seek" type="range" min="0" max="0" step="0.001" value="0" disabled aria-label="Seek through ASCII video">
+      <span class="time" id="total">00:00.000</span>
+    </div>
+    <p id="status" role="status">Open a .txt file created with EXPORT TXT in the ASCILINE player.</p>
+    <p class="hint">The player reconstructs the animation from the timestamped text frames. It does not need the original video or a video codec. <a href="/">Back to live player</a></p>
+  </main>
+  <script>
+    (() => {
+      const fileInput = document.getElementById('file');
+      const drop = document.getElementById('drop');
+      const stage = document.getElementById('stage');
+      const frameEl = document.getElementById('frame');
+      const empty = document.getElementById('empty');
+      const playButton = document.getElementById('play');
+      const seek = document.getElementById('seek');
+      const currentEl = document.getElementById('current');
+      const totalEl = document.getElementById('total');
+      const status = document.getElementById('status');
+      let frames = [];
+      let duration = 0;
+      let position = 0;
+      let frameIndex = -1;
+      let playing = false;
+      let playStartedAt = 0;
+      let playStartPosition = 0;
+      let raf = 0;
+
+      function formatTime(seconds) {
+        const mins = Math.floor(seconds / 60).toString().padStart(2, '0');
+        const secs = (seconds % 60).toFixed(3).padStart(6, '0');
+        return `${mins}:${secs}`;
+      }
+
+      function parseExport(text) {
+        const marker = /^@\s+(\d+(?:\.\d+)?)s(?:\s+source\s+(\d+)\s+(\d+(?:\.\d+)?)s)?\s*$/;
+        const parsed = [];
+        let time = null;
+        let source = null;
+        let sourceTime = null;
+        let body = [];
+        const save = () => {
+          if (time === null) return;
+          while (body.length && body[body.length - 1] === '') body.pop();
+          parsed.push({ time, source, sourceTime, text: body.join('\n') });
+        };
+
+        for (const line of text.replace(/^\uFEFF/, '').split(/\r?\n/)) {
+          const match = line.match(marker);
+          if (match) {
+            save();
+            time = Number(match[1]);
+            source = match[2] ? Number(match[2]) : null;
+            sourceTime = match[3] ? Number(match[3]) : null;
+            body = [];
+          } else if (time !== null) {
+            body.push(line);
+          }
+        }
+        save();
+        if (!parsed.length) throw new Error('No timestamped frames found. Choose a text export made by ASCILINE.');
+        return parsed;
+      }
+
+      function setFrame(index) {
+        if (!frames.length) return;
+        const safeIndex = Math.max(0, Math.min(frames.length - 1, index));
+        frameIndex = safeIndex;
+        frameEl.textContent = frames[safeIndex].text;
+        frameEl.hidden = false;
+        empty.hidden = true;
+        const lines = frames[safeIndex].text.split('\n');
+        const columns = Math.max(1, ...lines.map(line => line.length));
+        const rows = Math.max(1, lines.length);
+        const availableWidth = Math.max(100, stage.clientWidth - 28);
+        const availableHeight = Math.max(100, stage.clientHeight - 28);
+        const fontSize = Math.max(3, Math.min(16, availableWidth / (columns * 0.62), availableHeight / (rows * 1.15)));
+        frameEl.style.fontSize = `${fontSize}px`;
+        frameEl.style.lineHeight = `${fontSize * 1.15}px`;
+      }
+
+      function showPosition(seconds) {
+        position = Math.max(0, Math.min(duration, seconds));
+        let lo = 0, hi = frames.length - 1;
+        while (lo < hi) {
+          const mid = Math.ceil((lo + hi) / 2);
+          if (frames[mid].time <= position) lo = mid;
+          else hi = mid - 1;
+        }
+        if (frameIndex !== lo) setFrame(lo);
+        seek.value = String(position);
+        currentEl.textContent = formatTime(position);
+      }
+
+      function tick(now) {
+        if (!playing) return;
+        const next = playStartPosition + (now - playStartedAt) / 1000;
+        showPosition(next);
+        if (position >= duration) {
+          playing = false;
+          playButton.textContent = 'PLAY';
+          return;
+        }
+        raf = requestAnimationFrame(tick);
+      }
+
+      function togglePlayback() {
+        if (!frames.length) return;
+        if (playing) {
+          position = Math.min(duration, playStartPosition + (performance.now() - playStartedAt) / 1000);
+          playing = false;
+          cancelAnimationFrame(raf);
+          showPosition(position);
+          playButton.textContent = 'PLAY';
+          return;
+        }
+        if (position >= duration) showPosition(0);
+        playing = true;
+        playStartPosition = position;
+        playStartedAt = performance.now();
+        playButton.textContent = 'PAUSE';
+        raf = requestAnimationFrame(tick);
+      }
+
+      async function loadFile(file) {
+        if (!file) return;
+        try {
+          playing = false;
+          cancelAnimationFrame(raf);
+          frames = parseExport(await file.text());
+          duration = frames[frames.length - 1].time;
+          position = 0;
+          frameIndex = -1;
+          seek.max = String(duration || 0.001);
+          seek.value = '0';
+          seek.disabled = false;
+          playButton.disabled = false;
+          playButton.textContent = 'PLAY';
+          totalEl.textContent = formatTime(duration);
+          showPosition(0);
+          const sourceCount = new Set(frames.map(item => item.source).filter(value => value !== null)).size;
+          status.textContent = `${file.name} · ${frames.length} frames${sourceCount ? ` · ${sourceCount} source video(s)` : ''}`;
+        } catch (error) {
+          frames = [];
+          frameEl.hidden = true;
+          empty.hidden = false;
+          playButton.disabled = true;
+          seek.disabled = true;
+          status.textContent = error.message;
+        }
+      }
+
+      fileInput.addEventListener('change', () => loadFile(fileInput.files[0]));
+      playButton.addEventListener('click', togglePlayback);
+      seek.addEventListener('input', () => {
+        if (playing) {
+          playStartPosition = Number(seek.value);
+          playStartedAt = performance.now();
+        }
+        showPosition(Number(seek.value));
+      });
+      window.addEventListener('resize', () => { if (frameIndex >= 0) setFrame(frameIndex); });
+      document.addEventListener('keydown', event => {
+        if (event.code === 'Space' && event.target.tagName !== 'INPUT') {
+          event.preventDefault();
+          togglePlayback();
+        }
+      });
+      for (const eventName of ['dragenter', 'dragover']) drop.addEventListener(eventName, event => {
+        event.preventDefault();
+        drop.classList.add('drag');
+      });
+      for (const eventName of ['dragleave', 'drop']) drop.addEventListener(eventName, event => {
+        event.preventDefault();
+        drop.classList.remove('drag');
+      });
+      drop.addEventListener('drop', event => loadFile(event.dataTransfer.files[0]));
+    })();
+  </script>
+</body>
+</html>
